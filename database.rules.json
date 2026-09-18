@@ -1,0 +1,25 @@
+{
+  "rules": {
+    "telemetry": {
+      // ให้อ่านได้เฉพาะผู้ที่ยืนยันตัวตนแล้ว หรือเปิดให้อ่านเฉพาะสถานะล่าสุด
+      ".read": "auth != null",
+      // บังคับให้อุปกรณ์ (ESP32 หรือ IoT Service Account) ต้องผ่านการยืนยันตัวตน หรือตรวจสอบโครงสร้างข้อมูลที่ถูกต้อง
+      ".write": "auth != null",
+      ".validate": "newData.hasChildren(['soil_moisture', 'water_distance_cm', 'pump_state', 'timestamp'])",
+      "soil_moisture": {
+        ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1023"
+      },
+      "water_distance_cm": {
+        ".validate": "newData.isNumber() && newData.val() >= 0"
+      },
+      "pump_state": {
+        ".validate": "newData.isString() && (newData.val() == 'IDLE' || newData.val() == 'RUNNING' || newData.val() == 'ERROR' || newData.val() == 'PUMP_ON')"
+      }
+    },
+    // ปิดกั้น node อื่นๆ ทั้งหมดโดยสมบูรณ์
+    "$other": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}
