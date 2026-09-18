@@ -1,0 +1,17 @@
+# Compiled binaries and builds
+build/
+*.bin
+*.hex
+*.elf
+
+# Arduino IDE temporary files
+*.tmp
+*.hex
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code / IDE settings
+.vscode/
+.idea/
