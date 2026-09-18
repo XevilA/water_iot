@@ -147,11 +147,17 @@ flowchart TD
    ```
 5. คัดลอก URL เช่น `https://your-project-default-rtdb.asia-southeast1.firebasedatabase.app` ไปใส่ใน `FIREBASE_HOST` ในไฟล์ `esp32_gateway.ino`
 
-### 2. การขอ Token LINE Notify
-1. เข้าสู่ระบบที่ [LINE Notify](https://notify-bot.line.me/) ด้วยบัญชี LINE
-2. ไปที่เมนู **My Page** แล้วเลือก **Generate token**
-3. ตั้งชื่อบอท (เช่น `SmartFarm-Alert`) และเลือกห้องแชตที่ต้องการรับการแจ้งเตือน
-4. คัดลอกรหัส Token นำไปใส่ในตัวแปร `LINE_TOKEN` ในไฟล์ `esp32_gateway.ino`
+### 2. การสร้าง LINE Bot และขอ Channel Access Token / Channel Secret (แบบใหม่ทางการ)
+เนื่องจาก LINE Notify เตรียมหยุดให้บริการ (End of Life) ระบบนี้จึงอัปเกรดเป็น **LINE Messaging API** ซึ่งเป็นมาตรฐานทางการระดับ Enterprise:
+1. เข้าไปที่ [LINE Developers Console](https://developers.line.biz/)
+2. สร้าง **Provider** (เช่น `SmartAgri Tech`) และสร้าง Channel ชนิด **Messaging API**
+3. ไปที่แท็บ **Basic settings**:
+   - คัดลอก **Channel secret** มาเก็บไว้
+   - ดู **Your user ID** ที่ด้านล่างสุด นำไปใส่ใน `LINE_USER_ID`
+4. ไปที่แท็บ **Messaging API**:
+   - เลื่อนลงมาที่หัวข้อ **Channel access token (long-lived)** กดปุ่ม **Issue**
+   - คัดลอก Token นำไปใส่ในตัวแปร `LINE_CHANNEL_ACCESS_TOKEN` ในไฟล์ `esp32_gateway.ino`
+5. สแกน QR Code เพื่อเพิ่ม LINE Official Account (Bot) ของเราเป็นเพื่อนในโทรศัพท์มือถือ เพื่อให้ Bot สามารถส่ง Push Notification เข้าหาเราได้ทันที
 
 ---
 

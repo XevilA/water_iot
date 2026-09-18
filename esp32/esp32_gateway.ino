@@ -1,12 +1,13 @@
 /**
- * Project: Smart Auto-Watering & LINE Alert System
+ * Project: Smart Auto-Watering & LINE Messaging API Gateway
  * Device: ESP32 IoT Gateway (NodeMCU-32S)
  * Features:
- *   - Non-blocking millis() multitasking loop
- *   - LINE Notify rate-limiting cooldown (60s / state)
+ *   - LINE Messaging API (Push Message) via Channel Access Token
  *   - Firebase Realtime Database cloud sync (30s interval)
+ *   - Non-blocking millis() multitasking loop
+ *   - LINE Rate-limiting cooldown (60s / state)
  *   - Ultrasonic HC-SR04 dry-run protection (< 30cm safety)
- *   - Full UART bidirectional communication with micro:bit V2
+ *   - Bidirectional UART communication with micro:bit V2
  */
 
 #include <WiFi.h>
@@ -18,11 +19,18 @@
 const char* WIFI_SSID       = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD   = "YOUR_WIFI_PASSWORD";
 
-// รับ Token จาก https://notify-bot.line.me/
-const char* LINE_TOKEN      = "YOUR_LINE_NOTIFY_TOKEN";
+// ---------------- 💬 LINE Messaging API (แบบใหม่ Official) ----------------
+// ได้จาก LINE Developers Console > Messaging API > Channel access token (long-lived)
+const char* LINE_CHANNEL_ACCESS_TOKEN = "YOUR_LINE_CHANNEL_ACCESS_TOKEN";
 
-// Firebase Realtime Database Configuration
-const char* FIREBASE_HOST   = "https://your-project-default-rtdb.asia-southeast1.firebasedatabase.app";
+// Channel Secret (สำหรับตรวจสอบความถูกต้องกรณีทำ Webhook รับคำสั่ง)
+const char* LINE_CHANNEL_SECRET       = "YOUR_LINE_CHANNEL_SECRET";
+
+// User ID หรือ Group ID ที่ต้องการให้ Bot ยิงข้อความแจ้งเตือนไปหา (ได้จากหน้า Messaging API หรือ Webhook event)
+const char* LINE_USER_ID              = "YOUR_LINE_USER_OR_GROUP_ID";
+
+// ---------------- ☁️ Firebase Realtime Database ----------------
+const char* FIREBASE_HOST   = "https://water-iot-prod-2026-default-rtdb.asia-southeast1.firebasedatabase.app";
 const char* FIREBASE_AUTH   = "YOUR_DATABASE_SECRET_OR_WEB_API_KEY";
 
 // ================= 📌 กำหนดขาเชื่อมต่อฮาร์ดแวร์ =================
@@ -41,7 +49,7 @@ const unsigned long LINE_COOLDOWN_MS = 60000;// Cooldown LINE ป้องกั
 unsigned long lastSensorCheck   = 0;
 unsigned long lastFirebaseSync  = 0;
 
-// ตัวแปรจับเวลาแยกสำหรับแต่ละสถานะของ LINE Notify
+// ตัวแปรจับเวลาแยกสำหรับแต่ละสถานะของ LINE Alert
 unsigned long lastLineStart     = 0;
 unsigned long lastLineDone      = 0;
 unsigned long lastLineLowWater  = 0;
@@ -69,31 +77,40 @@ float readUltrasonicDistance() {
   if (duration == 0) {
     return -1.0; // สัญญาณสะท้อนไม่กลับมา
   }
-  // คำนวณเป็นหน่วยเซนติเมตร: ระยะทาง = (เวลา * ความเร็วเสียง 0.0343 ซม./us) / 2
   return (duration * 0.0343) / 2.0;
 }
 
-// ================= 💬 ฟังก์ชันส่งข้อความแจ้งเตือนผ่าน LINE Notify =================
-void sendLineNotify(String message) {
+// ================= 💬 ฟังก์ชันส่ง LINE Push Message (Messaging API แบบใหม่) =================
+void sendLinePushMessage(String messageText) {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[LINE]: Wi-Fi ยังไม่ได้เชื่อมต่อ ไม่สามารถส่งได้");
     return;
   }
 
   WiFiClientSecure client;
-  client.setInsecure(); // ละเว้นการตรวจสอบ SSL cert เพื่อประสิทธิภาพการทำงานบน MCU
+  client.setInsecure(); // ละเว้นการตรวจ CA certificate เพื่อความรวดเร็วและประหยัด RAM
 
   HTTPClient https;
-  https.begin(client, "https://notify-api.line.me/api/notify");
-  https.addHeader("Content-Type", "application/x-www-form-urlencoded");
-  https.addHeader("Authorization", "Bearer " + String(LINE_TOKEN));
+  https.begin(client, "https://api.line.me/v2/bot/message/push");
+  https.addHeader("Content-Type", "application/json");
+  https.addHeader("Authorization", "Bearer " + String(LINE_CHANNEL_ACCESS_TOKEN));
 
-  String payload = "message=" + message;
-  int httpCode = https.POST(payload);
-  if (httpCode > 0) {
-    Serial.println("[LINE] ส่งสำเร็จ: " + message);
+  // สร้าง JSON Payload ตามมาตรฐาน LINE Messaging API v2
+  String jsonBody = "{";
+  jsonBody += "\"to\":\"" + String(LINE_USER_ID) + "\",";
+  jsonBody += "\"messages\":[";
+  jsonBody += "{\"type\":\"text\",\"text\":\"" + messageText + "\"}";
+  jsonBody += "]";
+  jsonBody += "}";
+
+  int httpResponseCode = https.POST(jsonBody);
+  if (httpResponseCode == 200) {
+    Serial.println("[LINE Push]: ส่งข้อความสำเร็จ -> " + messageText);
   } else {
-    Serial.println("[LINE] ส่งล้มเหลว Code: " + String(httpCode));
+    Serial.print("[LINE Push]: เกิดข้อผิดพลาด HTTP Code: ");
+    Serial.println(httpResponseCode);
+    String response = https.getString();
+    Serial.println("[LINE Response]: " + response);
   }
   https.end();
 }
@@ -110,7 +127,7 @@ void syncToFirebase(int soil, float waterDist, String pumpState) {
   https.begin(client, url);
   https.addHeader("Content-Type", "application/json");
 
-  // สร้างเพย์โหลด JSON
+  // สร้างเพย์โหลด JSON สอดคล้องกับ Security Rules
   String jsonPayload = "{";
   jsonPayload += "\"soil_moisture\":" + String(soil) + ",";
   jsonPayload += "\"water_distance_cm\":" + String(waterDist, 1) + ",";
@@ -122,7 +139,7 @@ void syncToFirebase(int soil, float waterDist, String pumpState) {
   if (httpCode == HTTP_CODE_OK) {
     Serial.println("[Firebase] ซิงค์ข้อมูลสำเร็จ");
   } else {
-    Serial.println("[Firebase] เกิดข้อผิดพลาด Code: " + String(httpCode));
+    Serial.println("[Firebase] ข้อผิดพลาด Code: " + String(httpCode));
   }
   https.end();
 }
@@ -135,7 +152,7 @@ void setup() {
   pinMode(PIN_TRIG, OUTPUT);
   pinMode(PIN_ECHO, INPUT);
 
-  Serial.println("\n--- เริ่มต้นระบบ Smart Auto-Watering Gateway ---");
+  Serial.println("\n--- เริ่มต้นระบบ Smart Auto-Watering LINE Bot Gateway ---");
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("กำลังเชื่อมต่อ Wi-Fi");
@@ -170,21 +187,21 @@ void loop() {
       if (rawMsg.startsWith("ALERT:START")) {
         currentPumpState = "RUNNING";
         if (now - lastLineStart >= LINE_COOLDOWN_MS) {
-          sendLineNotify("🟢 ดินแห้ง เริ่มรดน้ำอัตโนมัติ (ความชื้นดิน: " + String(currentSoilValue) + ")");
+          sendLinePushMessage("🟢 ดินแห้ง เริ่มรดน้ำอัตโนมัติ (ความชื้นดิน: " + String(currentSoilValue) + ")");
           lastLineStart = now;
         }
       }
       else if (rawMsg.startsWith("ALERT:DONE")) {
         currentPumpState = "IDLE";
         if (now - lastLineDone >= LINE_COOLDOWN_MS) {
-          sendLineNotify("🔵 รดน้ำเสร็จแล้ว (ความชื้นดิน: " + String(currentSoilValue) + ")");
+          sendLinePushMessage("🔵 รดน้ำเสร็จแล้ว (ความชื้นดิน: " + String(currentSoilValue) + ")");
           lastLineDone = now;
         }
       }
       else if (rawMsg.startsWith("ALERT:ERROR_TIMEOUT")) {
         currentPumpState = "ERROR";
         if (now - lastLineError >= LINE_COOLDOWN_MS) {
-          sendLineNotify("⚠️ ระบบผิดปกติ: ปั๊มน้ำทำงานเกิน 60 วินาที ตัดระบบฉุกเฉิน โปรดตรวจสอบแปลงเกษตร");
+          sendLinePushMessage("⚠️ ระบบผิดปกติ: ปั๊มน้ำทำงานเกิน 60 วินาที ตัดระบบฉุกเฉิน โปรดตรวจสอบแปลงเกษตร");
           lastLineError = now;
         }
       }
@@ -216,7 +233,7 @@ void loop() {
           microbitSerial.println("CMD:STOP");
 
           if (now - lastLineLowWater >= LINE_COOLDOWN_MS) {
-            sendLineNotify("🔴 น้ำในถังใกล้หมด กรุณาเติมน้ำ (ระยะห่างผิวน้ำ: " + String(currentWaterDist, 1) + " ซม.)");
+            sendLinePushMessage("🔴 น้ำในถังใกล้หมด กรุณาเติมน้ำ (ระยะห่างผิวน้ำ: " + String(currentWaterDist, 1) + " ซม.)");
             lastLineLowWater = now;
           }
         }
